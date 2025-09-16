@@ -71,6 +71,9 @@ class QueryOptimizerService:
 
     # ---------- 프롬프트 ----------
     def _build_prompt(self, scenario_text: str, corpus: str) -> str:
+        print("corpus : ", corpus)
+        print("시나리오 : ", scenario_text)
+        
         return f"""
 당신은 Splunk 탐지 엔지니어입니다. 아래 입력을 바탕으로 **Splunk 검색창에 바로 붙여 실행 가능한 SPL**을 만드세요.
 반드시 **JSON 한 줄**만 반환합니다. 코드블록/설명/주석 금지.
@@ -87,6 +90,13 @@ class QueryOptimizerService:
 - SQLi: urldecode(uri_query) + UNION SELECT / ' OR '1'='1 / sleep()
 - PowerShell -enc: Image="*\\powershell.exe" AND CommandLine 정규식
 - C2 beacon: streamstats로 통신 간격(interval) 계산
+- 로그는 access_combined가 아님. 아래 예시처럼 rex로 필드를 추출하라.
+- PROXY 라인 예: 2025-09-16 ... [PROXY] GET https://microsoft.com/ - Client: 10.0.0.50 Status: 200 Size: 2518
+  권장 rex:
+  | rex "(?<method>GET|POST)\s+(?<url>https?://(?<host>[^/]+)/\S*)\s+-\s+Client:\s+(?<clientip>\d+\.\d+\.\d+\.\d+)\s+Status:\s+(?<status>\d+)\s+Size:\s+(?<bytes>\d+)"
+- AUTH 라인 예: [AUTH] User: X Event: Y Source: Z
+  권장 rex:
+  | rex "User:\s+(?<user>\S+)\s+Event:\s+(?<event>\S+)\s+Source:\s+(?<src>[\d\.]+)"
 
 # 시나리오
 {scenario_text.strip()}
