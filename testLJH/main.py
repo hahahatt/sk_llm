@@ -13,6 +13,8 @@ from src.nlp_processor import NLPProcessor
 from src.scenario_manager import ScenarioManager
 from src.log_generator import LogGenerator
 from src.download_manager import DownloadManager
+from src.query_optimizer_service import QueryOptimizerService
+
 import os
 from dotenv import load_dotenv
 
@@ -55,9 +57,10 @@ def main():
     scenario_manager = ScenarioManager()
     log_generator = LogGenerator()
     download_manager = DownloadManager()
+    query_processor = QueryOptimizerService(api_key, model=os.getenv("OPENAI_MODEL", "gpt-4.1"))
     
     # 탭 구성
-    tab1, tab2, tab3 = st.tabs(["📝 시나리오 입력", "📋 샘플 시나리오", "📥 생성된 로그"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 시나리오 입력", "📋 샘플 시나리오", "📥 생성된 로그", "📥 Splunk Query 생성"])
     
     with tab1:
         st.header("📝 자연어 시나리오 입력")
@@ -122,6 +125,59 @@ def main():
             display_generated_logs(st.session_state['generated_logs'], download_manager)
         else:
             st.info("아직 생성된 로그가 없습니다. 먼저 시나리오를 설정하고 로그를 생성해주세요.")
+
+    with tab4:
+        st.header("📥 Splunk Query 생성")
+        st.markdown("---")
+        st.subheader("🔎 LLM 기반 Splunk 쿼리 생성")
+
+        def _flatten_scenario_text(scn) -> str:
+            if isinstance(scn, dict):
+                parts = []
+                if scn.get("title"): parts.append(str(scn["title"]))
+                if scn.get("description"): parts.append(str(scn["description"]))
+                if scn.get("timeline"): parts.append("\n".join(map(str, scn["timeline"])))
+                return "\n".join(parts).strip()
+            return (str(scn) if scn is not None else "").strip()
+
+        if st.button("🧠 쿼리 생성/최적화", use_container_width=True):
+            processed_scn  = st.session_state.get("processed_scenario")
+            generated_logs = st.session_state.get("generated_logs")
+            if not processed_scn:
+                st.warning("시나리오가 없습니다. 탭 1에서 먼저 분석을 실행하세요.")
+            else:
+                scenario_text = _flatten_scenario_text(processed_scn)
+                try:
+                    res = query_processor.make_spl(
+                        scenario_text=scenario_text,
+                        generated_logs=generated_logs,
+                        stream=False,
+                    )
+                    spl = (res.get("query") or "").strip()
+                    if not spl:
+                        st.error("LLM이 빈 쿼리를 반환했습니다.")
+                    else:
+                        # ① 결과를 세션에 저장해서 탭 이동/리런에도 유지
+                        st.session_state["optimized_spl"] = spl
+                        st.session_state["optimized_raw"] = res
+                        st.success("✅ 최적화된 쿼리를 생성했습니다.")
+                except Exception as e:
+                    st.error(f"쿼리 생성 실패: {e}")
+
+        # ② 버튼 밖에서 항상 세션 값을 표시
+        if "optimized_spl" in st.session_state:
+            spl = st.session_state["optimized_spl"]
+            st.code(spl, language="spl")
+            st.download_button(
+                "optimized.spl 다운로드",
+                data=spl + "\n",
+                file_name="optimized.spl",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        else:
+            st.info("왼쪽 버튼으로 쿼리를 생성하면 여기 표시됩니다.")
+
 
 def display_processed_scenario(scenario):
     """처리된 시나리오 표시"""
