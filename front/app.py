@@ -5,6 +5,26 @@ import pandas as pd
 from io import StringIO
 from dotenv import load_dotenv
 import base64
+#from query_test import proccess_spl_markdown
+# import back.query_test.process_spl_markdown as process_spl_markdown
+
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from back.query_test import proccess_spl_markdown
+
+test_query = r'''(index=main sourcetype="web:access" earliest=-24h latest=now)
+| rex field=uri "(?i)(?<sqlinj>UNION|SELECT|--|OR 1=1)"
+| lookup threat_ip ip AS src_ip OUTPUT risk_level
+| eval sqli_flag=if(isnotnull(sqlinj),1,0)
+| stats count AS total_requests, sum(sqli_flag) AS sqli_hits BY src_ip, user_agent
+| where sqli_hits>=5
+| timechart span=1h count BY user_agent
+| sort - total_requests
+| dedup src_ip
+| table _time, src_ip, user_agent, total_requests, sqli_hits, risk_level
+'''
 
 # 환경 변수 로드
 load_dotenv()
@@ -111,9 +131,12 @@ if generate_btn and scenario:
 
         # 3. 룰 설명
         print("[DEBUG] 룰 설명 요청 시작")
-        explain_prompt = f"다음 Splunk 탐지 쿼리의 각 부분이 어떤 역할을 하는지 설명해줘:\n{rule_text}"
-        explain_resp = client.responses.create(model="gpt-5", input=explain_prompt)
-        explain_text = explain_resp.output_text.strip()
+        # explain_prompt = f"다음 Splunk 탐지 쿼리의 각 부분이 어떤 역할을 하는지 설명해줘:\n{rule_text}"
+        # explain_resp = client.responses.create(model="gpt-5", input=explain_prompt)
+        # explain_text = explain_resp.output_text.strip()
+        # print("[DEBUG] 룰 설명 완료\n", explain_text[:300], "...")  # 앞부분만 출력
+
+        explain_text = proccess_spl_markdown(test_query)
         print("[DEBUG] 룰 설명 완료\n", explain_text[:300], "...")  # 앞부분만 출력
 
         st.session_state["explain_ready"] = True
