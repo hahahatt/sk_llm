@@ -110,18 +110,18 @@ def main():
                     st.warning("먼저 시나리오를 분석해주세요.")
 
         with col3:
-            if st.button("🔎 SPL 룰 생성 및 검증", type="secondary", use_container_width=True):
+            if st.button("🔎 SPL 룰 검증", type="secondary", use_container_width=True):
                 if "optimized_spl" not in st.session_state:
                     st.warning("먼저 Splunk 쿼리를 생성하세요. (탭4에서 '🧠 쿼리 생성/최적화' 버튼을 눌러주세요)")
                 else:
-                    with st.spinner("AI가 SPL 룰을 생성하고 검증하는 중..."):
+                    with st.spinner("AI가 SPL 룰을 검증하는 중..."):
                         try:
                             spl_query = st.session_state["optimized_spl"]
                             spl_result = explain_spl_markdown_backend(spl_query)
                             st.session_state['spl_result'] = spl_result
-                            st.success("✅ SPL 룰 생성 및 검증 완료!")
+                            st.success("✅ SPL 룰 검증 완료!")
                         except Exception as e:
-                            st.error(f"❌ SPL 룰 생성 실패: {str(e)}")
+                            st.error(f"❌ SPL 룰 검증 실패: {str(e)}")
         
         if 'processed_scenario' in st.session_state:
             display_processed_scenario(st.session_state['processed_scenario'])
