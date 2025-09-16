@@ -1,3 +1,4 @@
+#모듈화
 """
 core/explain.py
 - SPL(주로 Splunk) 쿼리 파싱 및 설명 모듈
