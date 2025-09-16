@@ -95,7 +95,6 @@ _LLM_TEMPLATE = (
     "### 임계/튜닝 포인트\n- ...\n\n"
     "### 오탐 가능성\n- ...\n\n"
     "### 출력/결과 필드\n- ...\n\n"
-    "### 검증 결과\n- ...\n"
 )
 
 # -----------------------------
@@ -177,16 +176,7 @@ def explain_spl_markdown_backend(
 # 실행 테스트 (LLM 전용)
 # -----------------------------
 if __name__ == "__main__":
-    test_query = r'''(index=main sourcetype="web:access" earliest=-24h latest=now)
-| rex field=uri "(?i)(?<sqlinj>UNION|SELECT|--|OR 1=1)"
-| lookup threat_ip ip AS src_ip OUTPUT risk_level
-| eval sqli_flag=if(isnotnull(sqlinj),1,0)
-| stats count AS total_requests, sum(sqli_flag) AS sqli_hits BY src_ip, user_agent
-| where sqli_hits>=5
-| timechart span=1h count BY user_agent
-| sort - total_requests
-| dedup src_ip
-| table _time, src_ip, user_agent, total_requests, sqli_hits, risk_level
+    test_query = r'''"sourcetype":"access_combined.log", "search":"(urldecode(_raw) LIKE \"%UNION SELECT%\" OR urldecode(_raw) LIKE \"% OR '1'='1%\" OR urldecode(_raw) LIKE \"%sleep(%\")", "query":"sourcetype=access_combined.log | eval decoded=urldecode(_raw) | search decoded LIKE \"%UNION SELECT%\" OR decoded LIKE \"% OR '1'='1%\" OR decoded LIKE \"%sleep(%\" | bin _time span=5m | stats count by clientip, _time, decoded | fields _time, clientip, decoded, count"
 '''
     print("\n===== BACKEND TEST (LLM only) =====\n")
     if not is_llm_ready():
