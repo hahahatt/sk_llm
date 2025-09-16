@@ -1,3 +1,4 @@
+#로컬 테스트용
 """
 core/explain.py (백엔드 전용)
 - SPL(주로 Splunk) 쿼리 파싱 + LLM(OpenAI) 기반 설명/검증
