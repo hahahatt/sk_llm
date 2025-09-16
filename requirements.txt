@@ -1,0 +1,5 @@
+# requirements.txt
+
+streamlit>=1.36.0
+openai>=1.35.0
+dotenv>=1.0.0
