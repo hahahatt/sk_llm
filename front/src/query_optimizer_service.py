@@ -78,22 +78,33 @@ class QueryOptimizerService:
 반환 형식(키 고정):
 {{"query":"<SPL 문자열만>"}}
 
-지침:
-- index/sourcetype/EventCode 등 **긍정 필터**는 가능한 앞단 배치
-- **금지**: search <field> IN ("*...*","*...*")
-  → 대신 | where match(<field>, "(?i)(p1|p2|p3)") 또는
-         | search <field>="*p1*" OR <field>="*p2*"
-- transaction/join 지양, stats/streamstats 우선
-- SQLi: urldecode(uri_query) + UNION SELECT / ' OR '1'='1 / sleep()
-- PowerShell -enc: Image="*\\powershell.exe" AND CommandLine 정규식
-- C2 beacon: streamstats로 통신 간격(interval) 계산
-- 로그는 access_combined가 아님. 아래 예시처럼 rex로 필드를 추출하라.
-- PROXY 라인 예: 2025-09-16 ... [PROXY] GET https://microsoft.com/ - Client: 10.0.0.50 Status: 200 Size: 2518
-  권장 rex:
-  | rex "(?<method>GET|POST)\s+(?<url>https?://(?<host>[^/]+)/\S*)\s+-\s+Client:\s+(?<clientip>\d+\.\d+\.\d+\.\d+)\s+Status:\s+(?<status>\d+)\s+Size:\s+(?<bytes>\d+)"
-- AUTH 라인 예: [AUTH] User: X Event: Y Source: Z
-  권장 rex:
-  | rex "User:\s+(?<user>\S+)\s+Event:\s+(?<event>\S+)\s+Source:\s+(?<src>[\d\.]+)"
+[강제 규칙]
+- 쿼리는 반드시 **source="*"** 로 시작한다. (그 뒤에 공백 하나)
+- `index=`, `sourcetype=`, `earliest=`, `latest=` 금지.
+- 로그가 `Key: Value` 형태라면, **검색/집계 전에 rex로 필요한 필드를 생성**한다.
+- 로그 라인의 **브래킷 태그**로 먼저 범위를 좁혀라: 예) "[DLP]", "[USB]", "[EMAIL]", "[FS]" 등.
+- 가능한 빠른 연산만 사용: `eval/where/stats/streamstats/timechart` 우선, `transaction/join` 금지.
+- 결과 마지막엔 핵심 필드만 남겨 `| table ...` 또는 `| stats ... by ...` 로 정리.
+
+[필드 추출 템플릿(예시 그대로 쓰지 말고 최적화해서 쿼리 재조정 필요)]
+- DLP 라인("[DLP] ... Action: ... Channel: ... Policy: ... User: ... Confidence: N%")
+  | rex field=_raw "Action:\\s*(?<Action>\\S+)\\s+Channel:\\s*(?<Channel>\\S+)\\s+Policy:\\s*(?<Policy>\\S+)\\s+User:\\s*(?<User>\\S+)\\s+Confidence:\\s*(?<Confidence>\\d+)%"
+
+- USB 라인("[USB] ... Device: ... Event: ... User: ... (FILE: ... SIZE: N)?")
+  | rex field=_raw "Device:\\s*(?<Device>\\S+)\\s+Event:\\s*(?<UsbEvent>\\S+)\\s+User:\\s*(?<UsbUser>\\S+)(?:\\s+FILE:\\s*(?<UsbFile>\\S+)\\s+SIZE:\\s*(?<UsbSize>\\d+))?"
+
+- EMAIL 라인("[EMAIL] FROM: ... TO: ... SUBJECT: \"...\" SIZE: N (ATTACHMENT: ...)?")
+  | rex field=_raw "FROM:\\s*(?<From>\\S+)\\s+TO:\\s*(?<To>\\S+)\\s+SUBJECT:\\s*\\"(?<Subject>[^\\"]+)\\"\\s+SIZE:\\s*(?<Size>\\d+)(?:\\s+ATTACHMENT:\\s*(?<Attachment>\\S+))?"
+
+- 파일서버 라인("[FS] User: ... Operation: ... File: ... Size: N")
+  | rex field=_raw "User:\\s*(?<FsUser>\\S+)\\s+Operation:\\s*(?<FsOp>\\S+)\\s+File:\\s*(?<FsFile>\\S+)\\s+Size:\\s*(?<FsSize>\\d+)"
+
+[시간 정규화(필요 시)]
+- CSV/TEXT에 시간 문자열이 있으면 `_time`으로:
+  예) `| eval _time=strptime(UtcTime,"%Y-%m-%d %H:%M:%S")`
+      `| eval _time=strptime(TimeCreated,"%Y-%m-%dT%H:%M:%S")`
+      `| eval _time=strptime(timestamp,"%d/%b/%Y:%H:%M:%S +0000")`
+
 
 # 시나리오
 {scenario_text.strip()}
