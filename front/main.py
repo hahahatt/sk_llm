@@ -20,6 +20,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from back.query_test import proccess_spl_markdown
+from back.explain import explain_spl_markdown_backend
 
 
 test_query = r'''(index=main sourcetype="web:access" earliest=-24h latest=now)
@@ -112,7 +113,7 @@ def main():
                     with st.spinner("AI가 SPL 룰을 생성하고 검증하는 중..."):
                         try:
                             # 👉 process_spl_markdown 함수 사용
-                            spl_result = proccess_spl_markdown(test_query)
+                            spl_result = explain_spl_markdown_backend(test_query)
                             st.session_state['spl_result'] = spl_result
                             st.success("✅ SPL 룰 생성 및 검증 완료!")
                         except Exception as e:
@@ -124,14 +125,50 @@ def main():
         if 'processed_scenario' in st.session_state:
             display_processed_scenario(st.session_state['processed_scenario'])
         
+        # if 'spl_result' in st.session_state:
+        #     st.subheader("📜 생성된 SPL 룰 및 검증 결과")
+        #     st.markdown(
+        #         f"<div style='max-height:400px; overflow-y:auto; "
+        #         f"background-color:#f8f9fa; padding:15px; border-radius:5px;'>"
+        #         f"{st.session_state['spl_result']}"
+        #         f"</div>", unsafe_allow_html=True
+        #     )
+        # if 'spl_result' in st.session_state:
+        #     st.subheader("📜 생성된 SPL 룰 및 검증 결과")
+
+        #     # 🔹 불필요한 </div> 문자열 제거
+        #     clean_result = st.session_state['spl_result'].replace("</div>", "").strip()
+
+        #     st.markdown(
+        #         f"""
+        #         <div style='max-height:400px; overflow-y:auto;
+        #                     background-color:#f8f9fa; padding:15px;
+        #                     border-radius:5px; font-size:15px;
+        #                     white-space: pre-wrap; word-wrap: break-word;'>
+        #         {clean_result}
+                
+        #         """,
+        #         unsafe_allow_html=True
+        #     )
+        import re
         if 'spl_result' in st.session_state:
             st.subheader("📜 생성된 SPL 룰 및 검증 결과")
+
+            clean_result = st.session_state['spl_result']
+            # 🔹 주석 메타데이터 지우기
+            clean_result = re.sub(r"<!--.*?-->", "", clean_result, flags=re.DOTALL).strip()
+
             st.markdown(
-                f"<div style='max-height:400px; overflow-y:auto; "
-                f"background-color:#f8f9fa; padding:15px; border-radius:5px;'>"
-                f"{st.session_state['spl_result']}"
-                f"</div>", unsafe_allow_html=True
+                f"""
+                <div style='max-height:400px; overflow-y:auto;
+                            background-color:#f8f9fa; padding:15px;
+                            border-radius:5px; font-size:15px;'>
+                """,
+                unsafe_allow_html=True
             )
+            st.markdown(clean_result)  # 이제 깔끔하게 출력
+            st.markdown("</div>", unsafe_allow_html=True)
+
             
     
     with tab2:
