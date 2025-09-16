@@ -13,6 +13,7 @@ from src.nlp_processor import NLPProcessor
 from src.scenario_manager import ScenarioManager
 from src.log_generator import LogGenerator
 from src.download_manager import DownloadManager
+from src.query_optimizer_service import QueryOptimizerService
 from dotenv import load_dotenv
 
 import os
@@ -72,9 +73,10 @@ def main():
     scenario_manager = ScenarioManager()
     log_generator = LogGenerator()
     download_manager = DownloadManager()
+    query_processor = QueryOptimizerService(api_key, model=os.getenv("OPENAI_MODEL", "gpt-4.1"))
     
     # 탭 구성
-    tab1, tab2, tab3 = st.tabs(["📝 시나리오 입력", "📋 샘플 시나리오", "📥 생성된 로그"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 시나리오 입력", "📋 샘플 시나리오", "📥 생성된 로그", "📥 Splunk Query 생성"])
     
     with tab1:
         st.header("📝 자연어 시나리오 입력")
@@ -109,53 +111,26 @@ def main():
 
         with col3:
             if st.button("🔎 SPL 룰 생성 및 검증", type="secondary", use_container_width=True):
-                if 'processed_scenario' in st.session_state:
+                if "optimized_spl" not in st.session_state:
+                    st.warning("먼저 Splunk 쿼리를 생성하세요. (탭4에서 '🧠 쿼리 생성/최적화' 버튼을 눌러주세요)")
+                else:
                     with st.spinner("AI가 SPL 룰을 생성하고 검증하는 중..."):
                         try:
-                            # 👉 process_spl_markdown 함수 사용
-                            spl_result = explain_spl_markdown_backend(test_query)
+                            spl_query = st.session_state["optimized_spl"]
+                            spl_result = explain_spl_markdown_backend(spl_query)
                             st.session_state['spl_result'] = spl_result
                             st.success("✅ SPL 룰 생성 및 검증 완료!")
                         except Exception as e:
                             st.error(f"❌ SPL 룰 생성 실패: {str(e)}")
-                else:
-                    st.warning("먼저 시나리오를 분석해주세요.")
         
-        # 처리된 시나리오 표시
         if 'processed_scenario' in st.session_state:
             display_processed_scenario(st.session_state['processed_scenario'])
         
-        # if 'spl_result' in st.session_state:
-        #     st.subheader("📜 생성된 SPL 룰 및 검증 결과")
-        #     st.markdown(
-        #         f"<div style='max-height:400px; overflow-y:auto; "
-        #         f"background-color:#f8f9fa; padding:15px; border-radius:5px;'>"
-        #         f"{st.session_state['spl_result']}"
-        #         f"</div>", unsafe_allow_html=True
-        #     )
-        # if 'spl_result' in st.session_state:
-        #     st.subheader("📜 생성된 SPL 룰 및 검증 결과")
-
-        #     # 🔹 불필요한 </div> 문자열 제거
-        #     clean_result = st.session_state['spl_result'].replace("</div>", "").strip()
-
-        #     st.markdown(
-        #         f"""
-        #         <div style='max-height:400px; overflow-y:auto;
-        #                     background-color:#f8f9fa; padding:15px;
-        #                     border-radius:5px; font-size:15px;
-        #                     white-space: pre-wrap; word-wrap: break-word;'>
-        #         {clean_result}
-                
-        #         """,
-        #         unsafe_allow_html=True
-        #     )
         import re
         if 'spl_result' in st.session_state:
             st.subheader("📜 생성된 SPL 룰 및 검증 결과")
 
             clean_result = st.session_state['spl_result']
-            # 🔹 주석 메타데이터 지우기
             clean_result = re.sub(r"<!--.*?-->", "", clean_result, flags=re.DOTALL).strip()
 
             st.markdown(
@@ -166,11 +141,10 @@ def main():
                 """,
                 unsafe_allow_html=True
             )
-            st.markdown(clean_result)  # 이제 깔끔하게 출력
+            st.markdown(clean_result)
             st.markdown("</div>", unsafe_allow_html=True)
 
             
-    
     with tab2:
         st.header("📋 샘플 시나리오 선택")
         
@@ -199,6 +173,59 @@ def main():
             display_generated_logs(st.session_state['generated_logs'], download_manager)
         else:
             st.info("아직 생성된 로그가 없습니다. 먼저 시나리오를 설정하고 로그를 생성해주세요.")
+
+    with tab4:
+        st.header("📥 Splunk Query 생성")
+        st.markdown("---")
+        st.subheader("🔎 LLM 기반 Splunk 쿼리 생성")
+
+        def _flatten_scenario_text(scn) -> str:
+            if isinstance(scn, dict):
+                parts = []
+                if scn.get("title"): parts.append(str(scn["title"]))
+                if scn.get("description"): parts.append(str(scn["description"]))
+                if scn.get("timeline"): parts.append("\n".join(map(str, scn["timeline"])))
+                return "\n".join(parts).strip()
+            return (str(scn) if scn is not None else "").strip()
+
+        if st.button("🧠 쿼리 생성/최적화", use_container_width=True):
+            processed_scn  = st.session_state.get("processed_scenario")
+            generated_logs = st.session_state.get("generated_logs")
+            if not processed_scn:
+                st.warning("시나리오가 없습니다. 탭 1에서 먼저 분석을 실행하세요.")
+            else:
+                scenario_text = _flatten_scenario_text(processed_scn)
+                try:
+                    res = query_processor.make_spl(
+                        scenario_text=scenario_text,
+                        generated_logs=generated_logs,
+                        stream=False,
+                    )
+                    spl = (res.get("query") or "").strip()
+                    if not spl:
+                        st.error("LLM이 빈 쿼리를 반환했습니다.")
+                    else:
+                        # ① 결과를 세션에 저장해서 탭 이동/리런에도 유지
+                        print("spl:\n", spl)
+                        st.session_state["optimized_spl"] = spl
+                        st.session_state["optimized_raw"] = res
+                        st.success("✅ 최적화된 쿼리를 생성했습니다.")
+                except Exception as e:
+                    st.error(f"쿼리 생성 실패: {e}")
+
+        # ② 버튼 밖에서 항상 세션 값을 표시
+        if "optimized_spl" in st.session_state:
+            spl = st.session_state["optimized_spl"]
+            st.code(spl, language="spl")
+            st.download_button(
+                "optimized.spl 다운로드",
+                data=spl + "\n",
+                file_name="optimized.spl",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        else:
+            st.info("왼쪽 버튼으로 쿼리를 생성하면 여기 표시됩니다.")
 
 def display_processed_scenario(scenario):
     """처리된 시나리오 표시"""
