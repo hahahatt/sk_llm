@@ -71,9 +71,6 @@ class QueryOptimizerService:
 
     # ---------- 프롬프트 ----------
     def _build_prompt(self, scenario_text: str, corpus: str) -> str:
-        print("corpus : ", corpus)
-        print("시나리오 : ", scenario_text)
-        
         return f"""
 당신은 Splunk 탐지 엔지니어입니다. 아래 입력을 바탕으로 **Splunk 검색창에 바로 붙여 실행 가능한 SPL**을 만드세요.
 반드시 **JSON 한 줄**만 반환합니다. 코드블록/설명/주석 금지.
