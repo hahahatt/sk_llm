@@ -13,10 +13,13 @@ from src.nlp_processor import NLPProcessor
 from src.scenario_manager import ScenarioManager
 from src.log_generator import LogGenerator
 from src.download_manager import DownloadManager
+import os
+from dotenv import load_dotenv
+
 
 def main():
     st.set_page_config(
-        page_title="시나리오 기반 다중 로그 생성기",
+        page_title="SPLearn",
         page_icon="🚀",
         layout="wide"
     )
@@ -24,7 +27,10 @@ def main():
     # 사이드바 - API 키 설정
     with st.sidebar:
         st.header("🔑 설정")
-        api_key = st.text_input("OpenAI API Key", type="password", help="OpenAI API 키를 입력하세요")
+        load_dotenv()
+
+        api_key = os.getenv('OPENAI_API_KEY', '')
+        
         
         if api_key:
             st.success("✅ API 키 설정됨")
