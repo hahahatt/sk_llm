@@ -15,7 +15,24 @@ from src.log_generator import LogGenerator
 from src.download_manager import DownloadManager
 from dotenv import load_dotenv
 
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from back.query_test import proccess_spl_markdown
+
+
+test_query = r'''(index=main sourcetype="web:access" earliest=-24h latest=now)
+| rex field=uri "(?i)(?<sqlinj>UNION|SELECT|--|OR 1=1)"
+| lookup threat_ip ip AS src_ip OUTPUT risk_level
+| eval sqli_flag=if(isnotnull(sqlinj),1,0)
+| stats count AS total_requests, sum(sqli_flag) AS sqli_hits BY src_ip, user_agent
+| where sqli_hits>=5
+| timechart span=1h count BY user_agent
+| sort - total_requests
+| dedup src_ip
+| table _time, src_ip, user_agent, total_requests, sqli_hits, risk_level
+'''
 
 def main():
     st.set_page_config(
@@ -67,7 +84,7 @@ def main():
             height=150
         )
         
-        col1, col2 = st.columns([1, 1])
+        col1, col2, col3 = st.columns([1, 1, 1])
         
         with col1:
             if st.button("🔄 시나리오 분석 및 구체화", type="primary", use_container_width=True):
@@ -88,10 +105,34 @@ def main():
                     generate_logs(st.session_state['processed_scenario'], log_generator, log_count)
                 else:
                     st.warning("먼저 시나리오를 분석해주세요.")
+
+        with col3:
+            if st.button("🔎 SPL 룰 생성 및 검증", type="secondary", use_container_width=True):
+                if 'processed_scenario' in st.session_state:
+                    with st.spinner("AI가 SPL 룰을 생성하고 검증하는 중..."):
+                        try:
+                            # 👉 process_spl_markdown 함수 사용
+                            spl_result = proccess_spl_markdown(test_query)
+                            st.session_state['spl_result'] = spl_result
+                            st.success("✅ SPL 룰 생성 및 검증 완료!")
+                        except Exception as e:
+                            st.error(f"❌ SPL 룰 생성 실패: {str(e)}")
+                else:
+                    st.warning("먼저 시나리오를 분석해주세요.")
         
         # 처리된 시나리오 표시
         if 'processed_scenario' in st.session_state:
             display_processed_scenario(st.session_state['processed_scenario'])
+        
+        if 'spl_result' in st.session_state:
+            st.subheader("📜 생성된 SPL 룰 및 검증 결과")
+            st.markdown(
+                f"<div style='max-height:400px; overflow-y:auto; "
+                f"background-color:#f8f9fa; padding:15px; border-radius:5px;'>"
+                f"{st.session_state['spl_result']}"
+                f"</div>", unsafe_allow_html=True
+            )
+            
     
     with tab2:
         st.header("📋 샘플 시나리오 선택")
