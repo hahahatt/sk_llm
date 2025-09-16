@@ -7,6 +7,7 @@ core/explain.py (백엔드 전용)
 
 환경변수:
 - OPENAI_API_KEY: OpenAI 키 (없으면 규칙 기반만 동작)
+- OPENAI_MODEL : OpenAI 모델명(기본 gpt-4o-mini)
 
 사용 예:
     from core.explain import explain_spl_markdown_backend
@@ -18,7 +19,9 @@ import os
 from dotenv import load_dotenv
 import re
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Optional
+
+load_dotenv()
 
 # -----------------------------
 # 0) (선택) OpenAI 클라이언트
@@ -26,10 +29,12 @@ from typing import List, Dict, Any
 _OPENAI = None
 try:
     if os.getenv("OPENAI_API_KEY"):
-        from openai import OpenAI  # pip install openai
+        from openai import OpenAI  # pip install openai>=1.0.0
         _OPENAI = OpenAI()
 except Exception:
     _OPENAI = None
+
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # -----------------------------
 # 1) 토큰 추출 정규식
@@ -143,7 +148,7 @@ def infer_intent(spl: str) -> str:
     return "일반 로그 필터/집계 쿼리"
 
 # -----------------------------
-# 5) 요약/summarize & 검증/validate (규칙 기반)
+# 5) 요약 & 검증 (규칙 기반)
 # -----------------------------
 def summarize_spl(parsed: Dict[str, Any], spl: str) -> str:
     ov: SplOverview = parsed['overview']
@@ -167,7 +172,6 @@ def summarize_spl(parsed: Dict[str, Any], spl: str) -> str:
     if ops.sorts: steps.append("sort 정렬")
     if ops.dedups: steps.append("dedup 중복 제거")
     if ops.tables or ops.fields_cmds: steps.append("table/fields로 출력 필드 지정")
-
     if not steps:
         steps.append("단순 필터/기본 검색")
 
@@ -195,11 +199,10 @@ def validate_spl(parsed: Dict[str, Any]) -> List[str]:
         has_numeric = any(re.search(r"(>=|<=|>\s*\d|<\s*\d|=\s*\d)", w) for w in ops.wheres)
         if not has_numeric:
             warnings.append("where에 수치 임계 조건 부재 → 탐지 기준 불명확 가능")
-
     return warnings
 
 # -----------------------------
-# 6) 고정 템플릿 Markdown 생성(규칙 기반 7섹션)
+# 6) 고정 템플릿 Markdown(규칙 기반)
 # -----------------------------
 def _mk_md_base(parsed: Dict[str, Any], spl: str) -> str:
     ov: SplOverview = parsed['overview']
@@ -280,36 +283,72 @@ _LLM_TEMPLATE = (
     "### 검증 결과\n- <경고 목록 또는 '특별한 경고 없음'>\n"
 )
 
-def llm_explain_and_validate(spl: str) -> str | None:
+def is_llm_ready() -> bool:
+    return _OPENAI is not None
+
+def llm_explain_and_validate(spl: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Returns: (markdown or None, error_message or None)
+    1) Responses API (system + string input)
+    2) Responses API (messages 배열)
+    3) Chat Completions
+    """
     if _OPENAI is None:
-        return None
+        return None, "OPENAI_API_KEY not set"
+
+    prompt = _LLM_TEMPLATE.format(spl=spl)
+    # 1) Responses API (system + input string)
     try:
-        # Responses API 우선, 실패 시 chat.completions 폴백
+        rsp = _OPENAI.responses.create(
+            model=OPENAI_MODEL,
+            input=prompt,
+            system=_LLM_SYSTEM,
+            temperature=0.2,
+        )
+        out = getattr(rsp, "output_text", None)
+        if out:
+            return out.strip(), None
+        # 호환성 처리
+        parts = []
+        for item in getattr(rsp, "output", []) or []:
+            for c in getattr(item, "content", []) or []:
+                if getattr(c, "type", "") == "output_text":
+                    parts.append(getattr(c, "text", ""))
+        if parts:
+            return "\n".join(parts).strip(), None
+    except Exception as e1:
+        # 2) Responses API (messages 배열)
         try:
             rsp = _OPENAI.responses.create(
-                model="gpt-5",
+                model=OPENAI_MODEL,
                 input=[
                     {"role": "system", "content": _LLM_SYSTEM},
-                    {"role": "user", "content": _LLM_TEMPLATE.format(spl=spl)}
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
             )
-            return rsp.output_text.strip()
-        except Exception:
-            chat = _OPENAI.chat.completions.create(
-                model="gpt-5",
-                messages=[
-                    {"role": "system", "content": _LLM_SYSTEM},
-                    {"role": "user", "content": _LLM_TEMPLATE.format(spl=spl)}
-                ],
-                temperature=0.2,
-            )
-            return chat.choices[0].message.content.strip()
-    except Exception:
-        return None
+            out = getattr(rsp, "output_text", None)
+            if out:
+                return out.strip(), None
+        except Exception as e2:
+            # 3) Chat Completions
+            try:
+                chat = _OPENAI.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": _LLM_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.2,
+                )
+                return chat.choices[0].message.content.strip(), None
+            except Exception as e3:
+                return None, f"{type(e1).__name__} / {type(e2).__name__} / {type(e3).__name__}"
+
+    return None, "Unknown response format"
 
 # -----------------------------
-# 8) 퍼사드: 백엔드 진입점
+# 8) 퍼사드
 # -----------------------------
 def explain_spl_to_markdown(spl: str) -> str:
     parsed = parse_spl(spl)
@@ -329,30 +368,71 @@ def explain_spl_to_markdown_full(spl: str) -> str:
         md.append("### 검증 결과\n- 특별한 경고 없음")
     return "\n\n".join(md)
 
-def explain_spl_markdown_backend(spl: str, prefer_gpt: bool = True) -> str:
-    """백엔드에서 사용할 단일 함수.
-    - prefer_gpt=True 이고 OPENAI_API_KEY가 있으면 **LLM이 설명/검증 전체를 생성**.
-    - 그 외에는 규칙 기반(fallback)으로 생성.
-    """
+def _prepend_raw_query(spl: str, body: str, engine: str, model: str, llm_error: Optional[str]=None) -> str:
+    head = f"<!-- engine={engine}; model={model}{'; error='+llm_error if llm_error else ''} -->\n"
+    raw = f"### 입력된 쿼리\n```spl\n{spl}\n```\n\n"
+    return head + raw + body
+
+def explain_spl_markdown_backend_with_meta(
+    spl: str,
+    prefer_gpt: bool = True,
+    include_raw_query: bool = True
+) -> Dict[str, Any]:
+    """메타정보 포함 버전: 엔진/모델/에러를 함께 반환"""
+    used_engine = "RULE"
+    llm_error: Optional[str] = None
+    out: Optional[str] = None
+
     if prefer_gpt and _OPENAI is not None:
-        out = llm_explain_and_validate(spl)
+        out, llm_error = llm_explain_and_validate(spl)
         if out:
-            return out
-    # 폴백: 규칙 기반 9섹션
-    return explain_spl_to_markdown_full(spl)
+            used_engine = "LLM"
+
+    if not out:
+        out = explain_spl_to_markdown_full(spl)
+
+    if include_raw_query:
+        out = _prepend_raw_query(spl, out, used_engine, OPENAI_MODEL, llm_error)
+
+    return {
+        "engine": used_engine,
+        "model": OPENAI_MODEL,
+        "llm_ready": is_llm_ready(),
+        "llm_error": llm_error,
+        "markdown": out,
+    }
+
+def explain_spl_markdown_backend(
+    spl: str,
+    prefer_gpt: bool = True,
+    include_raw_query: bool = True
+) -> str:
+    """기존 호환 반환(문자열). 내부에서 엔진/모델 주석 + 입력 쿼리 포함."""
+    meta = explain_spl_markdown_backend_with_meta(
+        spl, prefer_gpt=prefer_gpt, include_raw_query=include_raw_query
+    )
+    return meta["markdown"]
 
 # -----------------------------
 # 9) 간단 실행 테스트
 # -----------------------------
 if __name__ == "__main__":
-    spl1 = r'''(index=main sourcetype="win:sec" earliest=-1h)
-    | eval t=_time
-    | transaction host user maxspan=30m startswith=(event_id=4625 AND logon_type=10) endswith=(event_id=4688 AND process="powershell.exe")
-    | where mvfind(values(event_id), "4624")>=0
-    | table _time host user duration eventcount values(src_ip) values(process) values(command_line)
+    spl1 = r'''(index=main sourcetype="web:access" earliest=-24h latest=now)
+| rex field=uri "(?i)(?<sqlinj>UNION|SELECT|--|OR 1=1)"
+| lookup threat_ip ip AS src_ip OUTPUT risk_level
+| eval sqli_flag=if(isnotnull(sqlinj),1,0)
+| stats count AS total_requests, sum(sqli_flag) AS sqli_hits BY src_ip, user_agent
+| where sqli_hits>=5
+| timechart span=1h count BY user_agent
+| sort - total_requests
+| dedup src_ip
+| table _time, src_ip, user_agent, total_requests, sqli_hits, risk_level
+
     '''
     print("\n===== BACKEND (prefer_gpt=True) =====\n")
-    print(explain_spl_markdown_backend(spl1, prefer_gpt=True))
+    meta = explain_spl_markdown_backend_with_meta(spl1, prefer_gpt=True, include_raw_query=True)
+    print(f"[engine={meta['engine']}] [model={meta['model']}] [llm_ready={meta['llm_ready']}] [err={meta['llm_error']}]")
+    print(meta["markdown"])
 
 __all__ = [
     'parse_spl',
@@ -362,5 +442,7 @@ __all__ = [
     'explain_spl_to_markdown',
     'explain_spl_to_markdown_full',
     'explain_spl_markdown_backend',
+    'explain_spl_markdown_backend_with_meta',
+    'is_llm_ready',
     'llm_explain_and_validate',
 ]
