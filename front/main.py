@@ -18,6 +18,12 @@ from src.query_optimizer_service import QueryOptimizerService
 from src.case_library_manager import CaseLibraryManager
 from src.progress_manager import ProgressManager
 
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from back.explain import explain_spl_markdown_backend
+
 def main():
     st.set_page_config(
         page_title="SPLearn",
@@ -115,7 +121,7 @@ def main():
             placeholder="예: 웹서버에 대한 외부 침입 공격 시나리오를 생성해주세요. 공격자가 SQL 인젝션을 통해 관리자 계정을 탈취하고 내부 데이터베이스에서 고객 정보를 빼내는 상황입니다.",
             height=150
         )
-        col1, col2 = st.columns([1, 1])
+        col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
             if st.button("🔄 시나리오 분석 및 구체화", type="primary", use_container_width=True):
                 if scenario_input.strip():
@@ -136,9 +142,41 @@ def main():
                 else:
                     st.warning("먼저 시나리오를 분석해주세요.")
         
+        with col3:
+            if st.button("🔎 SPL 룰 검증", type="secondary", use_container_width=True):
+                if "optimized_spl" not in st.session_state:
+                    st.warning("먼저 Splunk 쿼리를 생성하세요. (탭4에서 '🧠 쿼리 생성/최적화' 버튼을 눌러주세요)")
+                else:
+                    with st.spinner("AI가 SPL 룰을 검증하는 중..."):
+                        try:
+                            spl_query = st.session_state["optimized_spl"]
+                            spl_result = explain_spl_markdown_backend(spl_query)
+                            st.session_state['spl_result'] = spl_result
+                            st.success("✅ SPL 룰 검증 완료!")
+                        except Exception as e:
+                            st.error(f"❌ SPL 룰 검증 실패: {str(e)}")
+        
         if 'processed_scenario' in st.session_state:
             display_processed_scenario(st.session_state['processed_scenario'])
     
+        import re
+        if 'spl_result' in st.session_state:
+            st.subheader("📜 생성된 SPL 룰 및 검증 결과")
+
+            clean_result = st.session_state['spl_result']
+            clean_result = re.sub(r"<!--.*?-->", "", clean_result, flags=re.DOTALL).strip()
+
+            st.markdown(
+                f"""
+                <div style='max-height:400px; overflow-y:auto;
+                            background-color:#f8f9fa; padding:15px;
+                            border-radius:5px; font-size:15px;'>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown(clean_result)
+            st.markdown("</div>", unsafe_allow_html=True)
+
     # --- 샘플 시나리오 탭 (st.rerun() 추가하여 즉시 반응하도록 수정) ---
     with tab_samples:
         st.header("📋 샘플 시나리오 선택")
